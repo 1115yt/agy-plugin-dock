@@ -4,6 +4,12 @@
 
 A lightweight, zero-dependency plugin for **Google Antigravity** that surfaces UI plugins hidden inside the top-right `⋮ → Plugins` menu (such as `agy-capsule`, `agy-dart Context`, `Swarm`, etc.) directly onto the top toolbar next to `⋮` for one-click access.
 
+## Preview
+
+| Conversation View | New Chat View |
+| :---: | :---: |
+| ![Conversation View](./assets/preview-conversation.png) | ![New Chat View](./assets/preview-new-chat.png) |
+
 ## Features
 
 - **One-Click Open, Instant Switch & Toggle Close**

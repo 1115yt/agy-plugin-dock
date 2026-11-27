@@ -4,6 +4,12 @@
 
 轻量级、零依赖的 **Google Antigravity** 独立插件：将隐藏在右上角 `⋮ → 插件` 子菜单里的 UI 插件（如 `agy-capsule`、`agy-dart Context`、`Swarm` 等）直接平铺到顶栏 `⋮` 左侧，实现一键展开、瞬切与单标签关闭。
 
+## 效果预览
+
+| 对话窗口 | 新对话窗口 |
+| :---: | :---: |
+| ![对话窗口效果](./assets/preview-conversation.png) | ![新对话窗口效果](./assets/preview-new-chat.png) |
+
 ## 功能特性
 
 - **一键展开 / 瞬切 / 再次点击关闭**
