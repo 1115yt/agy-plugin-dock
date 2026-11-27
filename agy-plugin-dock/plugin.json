@@ -1,7 +1,7 @@
 {
   "name": "agy-plugin-dock",
   "displayName": "Plugin Dock",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "将右上角三点菜单里的 UI 插件直接固定到顶栏，一键打开或切换侧边栏。",
   "logo": "logo.svg",
   "author": {
