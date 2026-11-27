@@ -1,0 +1,20 @@
+{
+  "command": "node",
+  "args": [
+    "server.mjs"
+  ],
+  "description": "将 UI 插件固定到右上角顶栏，一键呼出侧边栏",
+  "display_name": "Plugin Dock",
+  "has_web_ui": true,
+  "restart_policy": "always",
+  "ui_config": {
+    "display_name": "Plugin Dock",
+    "views": [
+      {
+        "entrypoint": "SIDECAR_UI_ENTRYPOINT_AUX_PANE",
+        "path": "/",
+        "title": "Plugin Dock"
+      }
+    ]
+  }
+}
