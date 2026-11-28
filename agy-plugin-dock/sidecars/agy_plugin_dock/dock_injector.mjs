@@ -71,6 +71,41 @@ function findHeaderMoreButtons() {
   return results;
 }
 
+function countAllSidePanelTabs() {
+  const newTabBtn = document.querySelector('[data-testid="side-panel-new-tab-button"]');
+  if (!newTabBtn || !isVisibleElement(newTabBtn)) return 0;
+  const bar = newTabBtn.parentElement;
+  if (!bar) return 0;
+  const btnRect = newTabBtn.getBoundingClientRect();
+  const matched = [];
+  for (const el of bar.querySelectorAll('[role="tab"], button, div')) {
+    if (el === newTabBtn || el.contains(newTabBtn) || newTabBtn.contains(el)) continue;
+    if (!isVisibleElement(el) || el.closest('[data-agy-plugin-dock-host]')) continue;
+    const r = el.getBoundingClientRect();
+    if (Math.abs(r.top - btnRect.top) > 16 || r.height < 18 || r.height > 44 || r.width < 36 || r.width > 360) continue;
+    const text = (el.textContent || '').trim();
+    if (!text || text.length > 60) continue;
+    const parentText = (el.parentElement?.textContent || '').trim();
+    if (el.parentElement && el.parentElement !== bar && parentText === text) continue;
+    if (matched.some(prev => prev.contains(el) || el.contains(prev))) continue;
+    matched.push(el);
+  }
+  return matched.length;
+}
+
+function isAuxSidebarOpen(moreBtn) {
+  const newTabBtn = document.querySelector('[data-testid="side-panel-new-tab-button"]');
+  if (newTabBtn && isVisibleElement(newTabBtn)) return true;
+  if (findVisibleSidecarFrame()) return true;
+  const { btn: toggleBtn } = findSidebarToggleButton(moreBtn);
+  if (toggleBtn && moreBtn && isVisibleElement(toggleBtn) && isVisibleElement(moreBtn)) {
+    const tr = toggleBtn.getBoundingClientRect();
+    const mr = moreBtn.getBoundingClientRect();
+    if (tr.left - mr.right > 120) return true;
+  }
+  return false;
+}
+
 function findSidePanelTabs(plugins) {
   const newTabBtn = document.querySelector('[data-testid="side-panel-new-tab-button"]');
   const tabs = [];
@@ -241,41 +276,98 @@ function findSidebarToggleButton(moreBtn) {
   return { btn: null, scanned };
 }
 
+function waitForCondition(check, timeoutMs = 120) {
+  if (check()) return Promise.resolve(true);
+  return new Promise(resolve => {
+    let settled = false;
+    const done = ok => {
+      if (settled) return;
+      settled = true;
+      observer.disconnect();
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const observer = new MutationObserver(() => {
+      if (check()) done(true);
+    });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+    const timer = setTimeout(() => done(Boolean(check())), timeoutMs);
+  });
+}
+
 async function tryCloseSingleTab(tabEl) {
   if (!tabEl || !tabEl.isConnected) return false;
-  dispatchPointer(tabEl, 'pointerenter');
-  dispatchPointer(tabEl, 'mouseenter');
-  await new Promise(r => setTimeout(r, 30));
+  const newTabBtn = document.querySelector('[data-testid="side-panel-new-tab-button"]');
+  const bar = newTabBtn?.parentElement || null;
+  const scopes = [tabEl];
+  if (tabEl.parentElement && tabEl.parentElement !== bar && (!newTabBtn || !tabEl.parentElement.contains(newTabBtn))) {
+    const pr = tabEl.parentElement.getBoundingClientRect();
+    if (pr.width > 0 && pr.width <= 380 && pr.height <= 48) scopes.push(tabEl.parentElement);
+  }
 
-  for (const btn of tabEl.querySelectorAll('button')) {
-    if (!isVisibleElement(btn)) continue;
-    const r = btn.getBoundingClientRect();
-    if (r.width <= 24 && r.height <= 24) {
+  for (const scope of scopes) {
+    const btns = [...scope.querySelectorAll('button')].filter(btn => {
+      if (btn === newTabBtn) return false;
+      const r = btn.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.width <= 28 && r.height <= 28;
+    });
+    for (const btn of btns) {
+      dispatchPointer(btn, 'pointerdown');
+      dispatchPointer(btn, 'mousedown');
+      dispatchPointer(btn, 'pointerup');
+      dispatchPointer(btn, 'mouseup');
       btn.click();
-      await new Promise(r => setTimeout(r, 60));
-      if (!tabEl.isConnected) return true;
+      const gone = await waitForCondition(() => !tabEl.isConnected || !isVisibleElement(tabEl), 120);
+      if (gone) return true;
     }
   }
+
   const r = tabEl.getBoundingClientRect();
   const opts = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 1, buttons: 4 };
   tabEl.dispatchEvent(new MouseEvent('mousedown', opts));
   tabEl.dispatchEvent(new MouseEvent('mouseup', opts));
   tabEl.dispatchEvent(new MouseEvent('auxclick', opts));
-  await new Promise(r => setTimeout(r, 60));
-  return !tabEl.isConnected;
+  return waitForCondition(() => !tabEl.isConnected || !isVisibleElement(tabEl), 120);
 }
 
 async function closeActivePluginPanel(moreBtn, plugin, plugins) {
   const sideTabs = findSidePanelTabs(plugins || []);
+  const totalTabs = Math.max(sideTabs.length, countAllSidePanelTabs());
   const activeTab = sideTabs.find(t => t.pluginId === plugin?.id && t.active) || sideTabs.find(t => t.pluginId === plugin?.id);
-  if (activeTab && sideTabs.length > 1) {
+  if (activeTab) {
+    const api = globalThis.__agyPluginDock;
+    const shouldKeepOpen = totalTabs <= 1 && Boolean(api?.auxOpenBeforePlugin);
     const closedTab = await tryCloseSingleTab(activeTab.el);
-    globalThis.__agyPluginDock?.pushLog?.('close-tab', {
+    api?.pushLog?.('close-tab', {
       pluginId: plugin?.id,
-      tabCount: sideTabs.length,
+      tabCount: totalTabs,
       closedTab,
     });
-    if (closedTab) return true;
+    if (closedTab) {
+      if (totalTabs > 1) return true;
+      if (shouldKeepOpen) {
+        const collapsed = await waitForCondition(() => !isAuxSidebarOpen(moreBtn), 150);
+        if (collapsed) {
+          const { btn: toggleBtn } = findSidebarToggleButton(moreBtn);
+          if (toggleBtn) {
+            toggleBtn.click();
+            await new Promise(r => setTimeout(r, 80));
+            api?.pushLog?.('restore-aux-sidebar', { trigger: 'dock-toggle', restored: true });
+          }
+        }
+        if (api) api.auxOpenBeforePlugin = false;
+      } else {
+        await new Promise(r => setTimeout(r, 60));
+        if (isAuxSidebarOpen(moreBtn)) {
+          const { btn: toggleBtn } = findSidebarToggleButton(moreBtn);
+          if (toggleBtn) {
+            toggleBtn.click();
+            await new Promise(r => setTimeout(r, 80));
+          }
+        }
+      }
+      return true;
+    }
   }
 
   const { btn: toggleBtn, scanned } = findSidebarToggleButton(moreBtn);
@@ -770,8 +862,13 @@ function renderDockIntoContainer(anchor, payload, puzzleSvg) {
             return;
           }
         }
+        const totalTabsBefore = Math.max(sideTabs.length, countAllSidePanelTabs());
+        const auxOpenBefore = isAuxSidebarOpen(moreBtn);
+        if (totalTabsBefore === 0 && !sidecarOpen && globalThis.__agyPluginDock) {
+          globalThis.__agyPluginDock.auxOpenBeforePlugin = auxOpenBefore;
+        }
         const opened = await openPluginViaNativeMenu(moreBtn, plugin);
-        globalThis.__agyPluginDock?.pushLog?.('dock-open', { pluginId: plugin.id, opened });
+        globalThis.__agyPluginDock?.pushLog?.('dock-open', { pluginId: plugin.id, opened, auxOpenBefore });
         if (opened) {
           host._lastOpenedId = plugin.id;
           for (const el of bar.querySelectorAll('.dock-btn')) {
@@ -808,6 +905,7 @@ function installDockRuntime(owner, hash, puzzleSvg) {
   const api = {
     owner,
     hash,
+    auxOpenBeforePlugin: false,
     pushLog(event, detail) {
       logQueue.push({ seq: ++logSeq, event, detail: { ...(detail && typeof detail === 'object' ? detail : { value: detail }), at: new Date().toISOString().slice(11, 23) } });
       if (logQueue.length > 40) logQueue.shift();
@@ -852,11 +950,49 @@ function installDockRuntime(owner, hash, puzzleSvg) {
       return anchors.length > 0;
     },
     dispose() {
+      document.removeEventListener('click', onDocClick, true);
       for (const host of document.querySelectorAll('[data-agy-plugin-dock-host]')) host.remove();
       document.getElementById('agy-plugin-dock-cloak-style')?.remove();
       if (globalThis.__agyPluginDock === api) delete globalThis.__agyPluginDock;
     },
   };
+
+  const onDocClick = ev => {
+    const target = ev.target instanceof Element ? ev.target : null;
+    if (!target) return;
+    if (target.closest('button[data-testid="toggle-aux-sidebar"]')) {
+      const anyBusy = [...document.querySelectorAll('[data-agy-plugin-dock-host]')].some(h => h._dockBusy);
+      if (!anyBusy) api.auxOpenBeforePlugin = false;
+      return;
+    }
+    if (!api.auxOpenBeforePlugin) return;
+    if ([...document.querySelectorAll('[data-agy-plugin-dock-host]')].some(h => h._dockBusy)) return;
+    const newTabBtn = document.querySelector('[data-testid="side-panel-new-tab-button"]');
+    if (!newTabBtn || !isVisibleElement(newTabBtn)) return;
+    const bar = newTabBtn.parentElement;
+    if (!bar || !bar.contains(target) || newTabBtn.contains(target)) return;
+    const closeBtn = target.closest('button');
+    if (!closeBtn || closeBtn === newTabBtn) return;
+    const cr = closeBtn.getBoundingClientRect();
+    if (cr.width > 28 || cr.height > 28) return;
+    if (countAllSidePanelTabs() > 1) return;
+
+    api.auxOpenBeforePlugin = false;
+    (async () => {
+      const anchors = findHeaderMoreButtons();
+      const moreBtn = anchors[0]?.button || null;
+      if (!moreBtn) return;
+      const collapsed = await waitForCondition(() => !isAuxSidebarOpen(moreBtn), 150);
+      if (collapsed) {
+        const { btn: toggleBtn } = findSidebarToggleButton(moreBtn);
+        if (toggleBtn) {
+          toggleBtn.click();
+          api.pushLog('restore-aux-sidebar', { trigger: 'tab-close-x', restored: true });
+        }
+      }
+    })();
+  };
+  document.addEventListener('click', onDocClick, true);
 
   globalThis.__agyPluginDock = api;
   return true;
@@ -867,6 +1003,8 @@ export function buildDockRuntimeBundle(owner = INSTANCE_TS) {
     isVisibleElement,
     hasVerticalThreeDotsIcon,
     findHeaderMoreButtons,
+    countAllSidePanelTabs,
+    isAuxSidebarOpen,
     findSidePanelTabs,
     detectActivePluginTitles,
     findVisibleSidecarFrame,
@@ -874,6 +1012,7 @@ export function buildDockRuntimeBundle(owner = INSTANCE_TS) {
     hasPanelRightSvg,
     describeBtn,
     findSidebarToggleButton,
+    waitForCondition,
     tryCloseSingleTab,
     closeActivePluginPanel,
     waitForElement,
